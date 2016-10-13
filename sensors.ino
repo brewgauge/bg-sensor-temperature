@@ -4,19 +4,31 @@
 
 #define DEBUG_CONSOLE
 
+/**
+ * For each board change:
+ * BOARD_ID, NET_MAC_ADDR, NET_LOCAL_IP, if needed AVAILABLE_PROBE_CHANNELS
+ *
+ * The MQTT stuff (MQTT_BROKER_IP, MQTT_BROKER_PORT, MQTT_TOPIC) should be the
+ * same for all the boards
+ */
+
+// BOARD ID
+#define BOARD_ID 1
+
+// Number of probes attached to the multiplexers
+#define AVAILABLE_PROBE_CHANNELS 8
+
 // Network configuration (MAC / IP)
 byte NET_MAC_ADDR[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
 IPAddress NET_LOCAL_IP(10, 0, 0, 100);
 
-// MQTT Broker
+// MQTT Config
 IPAddress MQTT_BROKER_IP(172, 16, 0, 2);
-IPAddress MQTT_BROKER_PORT(172, 16, 0, 2);
+int MQTT_BROKER_PORT = 1883;
+char MQTT_TOPIC[] = "brewgauge";
 
 EthernetClient ethClient;
 PubSubClient client(ethClient);
-
-/* Number of probes attached to the multiplexers */
-#define AVAILABLE_PROBE_CHANNELS 8
 
 /*
  * Pin configuration.
@@ -35,7 +47,6 @@ PubSubClient client(ethClient);
 // MISO: Master In Slave Out
 #define PINS_ADC_DATA_IN 7
 
-
 /*
  * Analog to Digital Converter (ADC) functions for a 12-bit Microchip MCP3208, code
  * originally copied from the Arudino playground:
@@ -49,15 +60,15 @@ PubSubClient client(ethClient);
  *     http://en.wikipedia.org/wiki/Serial_Peripheral_Interface_Bus
  */
 void adc_setup() {
-  pinMode(PINS_ADC_SPI_SELECT, OUTPUT); 
-  pinMode(PINS_ADC_DATA_OUT, OUTPUT); 
-  pinMode(PINS_ADC_DATA_IN, INPUT); 
-  pinMode(PINS_ADC_SPI_CLOCK, OUTPUT); 
- 
+  pinMode(PINS_ADC_SPI_SELECT, OUTPUT);
+  pinMode(PINS_ADC_DATA_OUT, OUTPUT);
+  pinMode(PINS_ADC_DATA_IN, INPUT);
+  pinMode(PINS_ADC_SPI_CLOCK, OUTPUT);
+
   // Initialize with device disabled.
   _adc_device_off();
-  digitalWrite(PINS_ADC_DATA_OUT, LOW); 
-  digitalWrite(PINS_ADC_SPI_CLOCK, LOW); 
+  digitalWrite(PINS_ADC_DATA_OUT, LOW);
+  digitalWrite(PINS_ADC_SPI_CLOCK, LOW);
 }
 
 void _adc_spi_clock_tick() {
@@ -102,14 +113,14 @@ int adc_read(const byte channel) {
     adcvalue += digitalRead(PINS_ADC_DATA_IN) << i;
     _adc_spi_clock_tick();
   }
-  
+
   _adc_device_off();
   return adcvalue;
 }
 
 
-/* 
- * Multiplexer functions for a Texas Instruments CD4051B, an 8-channel 
+/*
+ * Multiplexer functions for a Texas Instruments CD4051B, an 8-channel
  * multiplexer.
  *
  * Datasheet:
@@ -131,12 +142,15 @@ void multiplexer_select_input(const byte input) {
 }
 
 
-void mqtt_send_value(const int channel_id, const int value) {
+void mqtt_pub_value(const int channel_id, const int value) {
+  char packet[512];
+  // Creates the JSON message
+  sprintf(packet, "{\"board_id\":%d, \"channel_id\":%d, \"adc_value\":%d}", BOARD_ID, channel_id, value);
   #ifdef DEBUG_CONSOLE
-  Serial.print("Sending ");
-  Serial.print(value);
-  Serial.print(" with channel_id: ");
-  Serial.println(channel_id);
+    Serial.print("Sending ");
+    Serial.print(packet);
+    Serial.println(channel_id);
+    client.publish(MQTT_TOPIC, packet);
   #endif
 }
 
@@ -145,29 +159,26 @@ void send_probe_sample(const byte channel) {
   multiplexer_select_input(channel);
   delay(500);
   int adc_value = adc_read(0);
-  mqtt_send_value(channel, adc_value);
-  
+  mqtt_pub_value(channel, adc_value);
   #ifdef DEBUG_CONSOLE
-  Serial.print("Channel ");
-  Serial.print(channel);
-  Serial.print(": ");
-  Serial.println(adc_value);
+    Serial.print("Channel ");
+    Serial.print(channel);
+    Serial.print(": ");
+    Serial.println(adc_value);
   #endif
 }
 
 void setup() {
   // MQTT SETUP
   client.setServer(MQTT_BROKER_IP, MQTT_BROKER_PORT);
-  
   Ethernet.begin(NET_MAC_ADDR, NET_LOCAL_IP);
-  
-  
+
   multiplexer_setup();
   adc_setup();
   multiplexer_select_input(3);
 
   #ifdef DEBUG_CONSOLE
-  Serial.begin(9600);
+    Serial.begin(9600);
   #endif
 
   // Allow the hardware to sort itself out
